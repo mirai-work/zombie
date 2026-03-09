@@ -823,7 +823,7 @@ class GameApp:
                 7
             )
 
-        pyxel.text(center_text_x("(C) Y. K"), WINDOW_H - 10, "(C) Y. K", 13)
+        pyxel.text(center_text_x("(C) Y. K/MIRAI WORK"), WINDOW_H - 10, "(C) Y. K/MIRAI WORK", 13)
         pyxel.text(
             center_text_x("Game Assembly by (C) M. T"),
             WINDOW_H - 4,
@@ -838,7 +838,7 @@ class GameApp:
         pyxel.line(40, 18, 120, 18, 7)
 
         instructions = [
-            ("1. MOVE:", "ARROW KEYS / DPAD"),
+            ("1. MOVE:", "ARROW KEYS / DIRECTIONAL PAD"),
             ("2. CAPTURE:", "TOUCH ZOMBIES TO JOIN THEM"),
             ("3. GOAL:", "BRING ALL TO THE RIGHT SIDE"),
         ]
@@ -848,7 +848,7 @@ class GameApp:
             pyxel.text(20, y, head, 11)
             pyxel.text(20, y + 8, body, 7)
 
-        begin_text = "- PRESS START TO BEGIN -"
+        begin_text = "- PRESS ENTER / GAMEPAD A/START TO BEGIN -"
         if pyxel.frame_count % 30 < 15:
             pyxel.text(center_text_x(begin_text), WINDOW_H - 15, begin_text, 13)
 
