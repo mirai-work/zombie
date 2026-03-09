@@ -50,18 +50,18 @@ CREDITS_CONTENT = [
     (16, "DEMOCRACY OF THE DEAD", 8),
     (8, "---", 7),
     (12, "GAME DESIGN & CONCEPT", 11),
-    (12, "Y. Kusanagi", 7),
+    (12, "Y. K", 7),
     (8, "", 0),
     (12, "PROGRAMMING & GRAPHICS", 11),
-    (12, "M. Takahashi", 7),
+    (12, "M. T", 7),
     (8, "", 0),
     (12, "SPECIAL THANKS TO:", 11),
-    (12, "Team Toda", 7),
+    (12, "Team To", 7),
     (12, "All Players", 7),
     (8, "", 0),
     (12, "TEST PLAYERS", 11),
-    (12, "Team Toda", 7),
-    (12, "M.Takahashi", 7),
+    (12, "Team To", 7),
+    (12, "M. T", 7),
     (8, "", 0),
     (16, "THANK YOU FOR PLAYING!", 13),
     (8, "---", 7),
@@ -823,11 +823,11 @@ class GameApp:
                 7
             )
 
-        pyxel.text(center_text_x("(C) Y.Kusanagi"), WINDOW_H - 10, "(C) Y.Kusanagi", 13)
+        pyxel.text(center_text_x("(C) Y. K"), WINDOW_H - 10, "(C) Y. K", 13)
         pyxel.text(
-            center_text_x("Game Assembly by (C) M.Takahashi"),
+            center_text_x("Game Assembly by (C) M. T"),
             WINDOW_H - 4,
-            "Game Assembly by (C) M.Takahashi",
+            "Game Assembly by (C) M. T",
             13
         )
 
