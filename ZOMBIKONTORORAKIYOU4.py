@@ -803,34 +803,25 @@ class GameApp:
 
     def draw_title(self):
         pyxel.cls(0)
-        # 使用する画像のサイズ（image_0.png のサイズに合わせてここを修正してください）
-        img_w = 75  # 例: 横64ピクセル
-        img_h = 100  # 例: 縦64ピクセル
-
-        # 中央に配置するための座標計算
+        img_w, img_h = 75, 100
         img_x = (WINDOW_W - img_w) // 2
-        img_y = (WINDOW_H - img_h) // 2 - 4 # テキスト用に少し上にずらしています
-
-        # 画像を描画 (バンク0, 座標(0,0)からサイズ img_w, img_h を切り出し)
+        img_y = (WINDOW_H - img_h) // 2 - 4
+        
+        # 画像表示
         pyxel.blt(img_x, img_y, 0, 0, 0, img_w, img_h)
 
-        begin_text = "- PRESS ENTER / GAMEPAD A/START -"
+        # 点滅テキスト（ここも少し下げてバランス調整）
+        bt = "- PRESS ENTER / GAMEPAD A/START -"
         if pyxel.frame_count % 30 < 15:
-            pyxel.text(
-                center_text_x(begin_text),
-                WINDOW_H - 18,
-                begin_text,
-                7
-            )
+            pyxel.text(center_text_x(bt), WINDOW_H - 24, bt, 7) # 旧 30
 
-        pyxel.text(center_text_x("(C) Y. K/MIRAI WORK"), WINDOW_H - 10, "(C) Y. K/MIRAI WORK", 13)
-        pyxel.text(
-            center_text_x("Game Assembly by (C) M. T"),
-            WINDOW_H - 4,
-            "Game Assembly by (C) M. T",
-            13
-        )
+        # コピーライト（1行分下げて配置）
+        c1 = "(C) Y. K/MIRAI WORK"
+        c2 = "Game Assembly by (C) M. T"
+        pyxel.text(center_text_x(c1), WINDOW_H - 16, c1, 13) # 旧 22
+        pyxel.text(center_text_x(c2), WINDOW_H - 10, c2, 13) # 旧 16
 
+    
     def draw_tutorial(self):
         pyxel.cls(0)
         t_title = "TUTORIAL"
