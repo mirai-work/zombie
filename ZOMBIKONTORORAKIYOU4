@@ -1,0 +1,963 @@
+import pyxel
+import random
+import math
+
+# -------------------------
+# Constants
+# -------------------------
+SCREEN_W = 160
+SCREEN_H = 120
+PANEL_H = 40          # 追加
+TOTAL_H = 160         # 追加 (120 + 40)
+
+BG_COLORS = [0, 1, 1, 2, 2, 3]
+
+DRAGON_SHOW_TIME = 300 # 10s @30fps
+ENDING_SHOW_TIME = 150 # 5s @30fps
+
+# -------------------------
+# Bullet
+# -------------------------
+class Bullet:
+    def __init__(self, x, y, dx=2, dy=0, color=7):
+        self.x = x
+        self.y = y
+        self.dx = dx
+        self.dy = dy
+        self.color = color
+        self.active = True
+
+    def update(self):
+        self.x += self.dx
+        self.y += self.dy
+        if self.x < -8 or self.x > SCREEN_W + 8 or self.y < -8 or self.y > SCREEN_H + 8:
+            self.active = False
+
+    def draw(self):
+        if self.color == 11:  # player shot (cyan)
+            # draw a trail
+            pyxel.line(int(self.x), int(self.y), int(self.x - self.dx * 1.5), int(self.y - self.dy * 1.5), 10)
+            pyxel.pset(int(self.x), int(self.y), 11)
+        else:  # enemy / boss
+            pyxel.circ(int(self.x), int(self.y), 1, self.color)
+            pyxel.pset(int(self.x), int(self.y), 7)
+
+# -------------------------
+# Explosion (particles)
+# -------------------------
+class Explosion:
+    def __init__(self, x, y, count=30):
+        self.particles = []
+        for _ in range(count):
+            angle = random.uniform(0, 2 * math.pi)
+            speed = random.uniform(0.6, 3.5)
+            self.particles.append({
+                'x': x, 'y': y,
+                'dx': math.cos(angle) * speed,
+                'dy': math.sin(angle) * speed,
+                'color': random.choice([8, 9, 10, 11]),
+                'life': random.randint(10, 30),
+                'size': random.randint(1, 2)
+            })
+        self.active = True
+
+    def update(self):
+        for p in self.particles:
+            p['x'] += p['dx']
+            p['y'] += p['dy']
+            p['dx'] *= 0.96
+            p['dy'] *= 0.96
+            p['life'] -= 1
+        self.particles = [p for p in self.particles if p['life'] > 0]
+        if not self.particles:
+            self.active = False
+
+    def draw(self):
+        for p in self.particles:
+            if p['life'] > 15:
+                c = p['color']
+            elif p['life'] > 5:
+                c = 7
+            else:
+                c = 0
+            if p['size'] == 2:
+                pyxel.rect(int(p['x']) - 1, int(p['y']) - 1, 2, 2, c)
+            else:
+                pyxel.pset(int(p['x']), int(p['y']), c)
+
+# -------------------------
+# Background (stars + planet)
+# -------------------------
+class Star:
+    def __init__(self, speed_factor):
+        self.x = random.randint(0, SCREEN_W)
+        self.y = random.randint(0, SCREEN_H)
+        self.speed = random.uniform(0.08, 0.4) * speed_factor
+        self.brightness = random.choice([7, 10, 12])
+
+    def update(self):
+        self.x -= self.speed
+        if self.x < 0:
+            self.x = SCREEN_W
+            self.y = random.randint(0, SCREEN_H)
+            self.brightness = random.choice([7, 10, 12])
+
+    def draw(self):
+        pyxel.pset(int(self.x), int(self.y), self.brightness)
+
+class Background:
+    def __init__(self):
+        self.stars_far = [Star(0.5) for _ in range(30)]
+        self.stars_near = [Star(1.5) for _ in range(30)]
+        self.planet_x = SCREEN_W + 60
+        self.planet_y = random.randint(25, 90)
+        self.planet_color = 5
+
+    def update(self):
+        for s in self.stars_far:
+            s.update()
+        for s in self.stars_near:
+            s.update()
+        self.planet_x -= 0.04
+        if self.planet_x < -120:
+            self.planet_x = SCREEN_W + random.randint(40, 120)
+            self.planet_y = random.randint(25, 90)
+            self.planet_color = random.choice([5, 6, 13])
+
+    def draw(self):
+        px, py = int(self.planet_x), int(self.planet_y)
+        pyxel.circ(px, py, 15, self.planet_color)
+        pyxel.circ(px - 5, py + 5, 12, (self.planet_color + 1) % 16)
+        pyxel.line(px - 10, py + 10, px + 10, py - 10, (self.planet_color + 1) % 16)
+        for s in self.stars_far:
+            s.draw()
+        for s in self.stars_near:
+            s.draw()
+
+# -------------------------
+# Player
+# -------------------------
+class Player:
+    SIZE = 6
+    def __init__(self):
+        self.x = 20
+        self.y = SCREEN_H // 2
+        self.life = 4
+        self.bullets = []
+        self.exhaust = []
+        self.shot_timer = 0
+        self.power = 1
+
+    def update(self):
+        dx = dy = 0
+        is_shooting = False
+
+        # --- 1. キーボード・パッド入力 ---
+        if pyxel.btn(pyxel.KEY_UP) or pyxel.btn(pyxel.GAMEPAD1_BUTTON_DPAD_UP): dy = -2
+        if pyxel.btn(pyxel.KEY_DOWN) or pyxel.btn(pyxel.GAMEPAD1_BUTTON_DPAD_DOWN): dy = 2
+        if pyxel.btn(pyxel.KEY_LEFT) or pyxel.btn(pyxel.GAMEPAD1_BUTTON_DPAD_LEFT): dx = -2
+        if pyxel.btn(pyxel.KEY_RIGHT) or pyxel.btn(pyxel.GAMEPAD1_BUTTON_DPAD_RIGHT): dx = 2
+        if pyxel.btn(pyxel.KEY_SPACE) or pyxel.btn(pyxel.GAMEPAD1_BUTTON_A): is_shooting = True
+
+        # --- 2. バーチャルパッド入力 (画面下部の y > 120 エリア) ---
+        if pyxel.btn(pyxel.MOUSE_BUTTON_LEFT):
+            mx, my = pyxel.mouse_x, pyxel.mouse_y
+            if my > SCREEN_H:
+                # 左側：移動
+                if mx < 80:
+                    if mx < 30: dx = -2
+                    elif mx > 50: dx = 2
+                    if my < SCREEN_H + 15: dy = -2
+                    elif my > SCREEN_H + 25: dy = 2
+                # 右側：ショット
+                else:
+                    is_shooting = True
+
+        self.x = max(Player.SIZE, min(SCREEN_W - Player.SIZE, self.x + dx))
+        self.y = max(Player.SIZE, min(SCREEN_H - Player.SIZE, self.y + dy))
+
+        self.shot_timer += 1
+        if is_shooting and self.shot_timer % 5 == 0:
+            if self.power == 1:
+                self.bullets.append(Bullet(self.x + 6, self.y, dx=3, color=11))
+            elif self.power == 2:
+                for dy_offset in [-1, 1]:
+                    self.bullets.append(Bullet(self.x + 6, self.y + dy_offset, dx=3, color=11))
+            else:
+                for dy_offset in [-2, 0, 2]:
+                    self.bullets.append(Bullet(self.x + 6, self.y + dy_offset, dx=3, color=11))
+
+        # (以下、排出ガスのエフェクトなどはそのまま)
+        self.exhaust.append({'x': self.x - 6, 'y': self.y, 'life': 8, 'dy': random.uniform(-0.5, 0.5)})
+        for e in self.exhaust:
+            e['x'] -= 1.5
+            e['y'] += e['dy']
+            e['life'] -= 1
+        self.exhaust = [e for e in self.exhaust if e['life'] > 0]        # update bullets
+        for b in self.bullets:
+            if b is not None and b.active:
+                b.update()
+        self.bullets = [b for b in self.bullets if b is not None and b.active]
+
+        # engine exhaust effect
+        self.exhaust.append({'x': self.x - 6, 'y': self.y, 'life': 8, 'dy': random.uniform(-0.5, 0.5)})
+        for e in self.exhaust:
+            e['x'] -= 1.5
+            e['y'] += e['dy']
+            e['life'] -= 1
+        self.exhaust = [e for e in self.exhaust if e['life'] > 0]
+
+    def draw(self):
+        px, py = self.x, self.y
+        for e in self.exhaust:
+            c = 8 if e['life'] > 4 else 9 if e['life'] > 2 else 10
+            pyxel.circ(e['x'], e['y'], 1, c)
+        pyxel.rect(px - 5, py - 2, 7, 4, 13)
+        pyxel.tri(px + 2, py, px - 5, py - 4, px - 5, py + 4, 7)
+        pyxel.circ(px - 2, py, 2, 11)
+        pyxel.tri(px - 5, py - 4, px - 5, py - 6, px + 1, py - 3, 1)
+        pyxel.tri(px - 5, py + 4, px - 5, py + 6, px + 1, py + 3, 1)
+        pyxel.rect(px - 8, py - 1, 3, 2, 8)
+        for b in self.bullets:
+            b.draw()
+
+# -------------------------
+# Enemy (small dragon drone)
+# -------------------------
+class Enemy:
+    SIZE = 6
+    def __init__(self, x, y, stage):
+        self.x = x
+        self.y = y
+        self.active = True
+        self.timer = 0
+        self.stage = stage
+        self.bullets = []
+
+    def update(self, player):
+        self.timer += 1
+        self.x -= 0.5 + (self.stage + 1) * 0.1 # stage=0 のときは1.1
+        self.y += math.sin(self.timer * 0.1) * 1.5
+        if self.timer % 40 == 0:
+            dy = (player.y - self.y) / 20
+            self.bullets.append(Bullet(self.x, self.y, dx=-2, dy=dy, color=8))
+        # update bullets safely
+        for b in self.bullets:
+            if b is not None and b.active:
+                b.update()
+        self.bullets = [b for b in self.bullets if b is not None and b.active]
+        if self.x < -10:
+            self.active = False
+
+    def draw(self):
+        px, py = self.x, self.y
+        pyxel.circ(px, py, 4, 3)
+        pyxel.pset(px + 2, py - 2, 9)
+        pyxel.tri(px + 4, py, px, py - 4, px + 5, py - 5, 2)
+        pyxel.tri(px + 4, py, px, py + 4, px + 5, py + 5, 2)
+        pyxel.line(px - 4, py, px - 6, py, 8)
+        for b in self.bullets:
+            b.draw()
+
+# -------------------------
+# Boss (dragon head)
+# -------------------------
+class Boss:
+    SIZE = 24
+    # stage 0 (index 0) corresponds to Stage 1.
+    # Stage 0, 1, 2, 3, 4, 5 (total 6 stages)
+    HP_LIST = [5, 10, 15, 20, 30, 50] 
+
+    def __init__(self, stage):
+        self.x = SCREEN_W - 50
+        if stage == 5:
+            self.x = SCREEN_W - 35
+        self.y = SCREEN_H // 2 - 12
+        self.stage = stage
+        self.hp = Boss.HP_LIST[stage]
+        self.bullets = []
+        self.active = True
+        self.timer = 0
+
+    def update(self, player):
+        self.timer += 1
+        self.y = SCREEN_H // 2 + math.sin(self.timer * 0.05) * 10
+        if self.stage == 5:
+            if self.timer % 30 == 0:
+                for angle in [-15, -10, -5, 0, 5, 10, 15]:
+                    angle_rad = math.radians(angle) + math.pi
+                    self.bullets.append(Bullet(self.x - 5, self.y + 10, dx=3 * math.cos(angle_rad), dy=3 * math.sin(angle_rad), color=8))
+            if self.timer % 60 == 0:
+                dy = (player.y - self.y) / 20
+                self.bullets.append(Bullet(self.x, self.y, dx=-2, dy=dy, color=9))
+        else:
+            if self.timer % 50 == 0:
+                for angle in [i * math.pi / 6 for i in range(12)]:
+                    self.bullets.append(Bullet(self.x, self.y, dx=2 * math.cos(angle), dy=2 * math.sin(angle), color=12))
+            if self.timer % 20 == 0:
+                dy = (player.y - self.y) / 20
+                self.bullets.append(Bullet(self.x, self.y, dx=-3, dy=dy, color=8))
+        # update bullets safely
+        for b in self.bullets:
+            if b is not None and b.active:
+                b.update()
+        self.bullets = [b for b in self.bullets if b is not None and b.active]
+
+    def draw(self):
+        px, py = self.x, self.y
+        if self.stage < 5:
+            size = 12
+            pyxel.rect(px - size//2, py - size//2, size, size, 3)
+            pyxel.tri(px - size//2, py + size//2, px - size//2 - 5, py, px + 5, py + size//2, 2)
+            pyxel.line(px + size//2, py - size//2, px + size//2 + 5, py - size//2 - 5, 2)
+            pyxel.pset(px + size//2 - 2, py - 3, 8)
+            pyxel.rect(px - size//2 - 3, py - 1, 3, 2, 8)
+        else:
+            pyxel.rect(px - 10, py - 20, 40, 40, 2)
+            pyxel.tri(px - 10, py + 20, px - 15, py, px + 30, py + 20, 3)
+            pyxel.tri(px + 30, py - 20, px + 40, py - 30, px + 20, py - 15, 9)
+            pyxel.circ(px + 20, py - 5, 3, 8)
+            pyxel.rect(px - 15, py + 5, 5, 10, 8)
+        for b in self.bullets:
+            b.draw()
+        max_hp = Boss.HP_LIST[self.stage]
+        # HP bar (scale to 100 px width)
+        if max_hp > 0:
+            pyxel.rect(10, 5, int(self.hp * (100 / max_hp)), 4, 8)
+            pyxel.rectb(10, 5, 100, 4, 7)
+
+# -------------------------
+# PowerUp
+# -------------------------
+class PowerUp:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.active = True
+
+    def update(self):
+        self.x -= 1
+        if self.x < -6:
+            self.active = False
+
+    def draw(self):
+        pyxel.circ(self.x, self.y, 3, 10)
+        pyxel.circb(self.x, self.y, 4, 7)
+        pyxel.text(self.x - 1, self.y - 1, "P", 1)
+
+# -------------------------
+# Title Particle
+# -------------------------
+class TitleParticle:
+    def __init__(self):
+        self.x = random.randint(0, SCREEN_W)
+        self.y = random.randint(0, SCREEN_H)
+        self.dx = random.uniform(-0.2, 0.2)
+        self.dy = random.uniform(-0.5, -0.1)
+        self.color = random.choice([7, 8, 9])
+
+    def update(self):
+        self.x += self.dx
+        self.y += self.dy
+        if self.y < -2:
+            self.y = SCREEN_H + 2
+            self.x = random.randint(0, SCREEN_W)
+
+    def draw(self):
+        pyxel.pset(int(self.x), int(self.y), self.color)
+
+# -------------------------
+# App (Main)
+# -------------------------
+# --- 修正版 App.__init__ と App.update ---
+
+class App:
+    def __init__(self):
+        # 画面初期化
+        pyxel.init(SCREEN_W, SCREEN_H, title="SHOOTING WAR: DRAGON AWAKENING", fps=30)
+        self.background = Background()
+        
+        # 初期リセット
+        self.reset(is_initial_start=False) 
+        
+        # 【修正】タイトルとインターリュードをスキップして即開始する設定
+        self.show_title = False     # タイトル画面を表示しない
+        self.stage_interlude = False # インターリュード（説明画面）を表示しない
+        self.stage = 0              # ステージ1 (内部数値0) から開始
+        self.enemies_to_spawn = 10  # ステージ1の敵出現数
+        self.enemies_spawned = 0
+        
+        pyxel.run(self.update, self.draw)
+
+    def reset(self, is_initial_start=False):
+        # core game
+        self.player = Player()
+        self.enemies = []
+        self.powerups = []
+        self.boss = None
+        self.stage = 0 # 【修正】ここも0（ステージ1）からにする
+        self.stage_timer = 0
+        self.score = 0
+        self.game_over = False
+        self.ending = False
+        self.show_title = is_initial_start
+        self.title_timer = 0
+        self.explosions = []
+        if not hasattr(self, 'ranking'):
+            self.ranking = []
+        self.title_particles = [TitleParticle() for _ in range(40)]
+        self.end_start_frame = 0
+
+        # ending helpers
+        self.end_particles = []
+        self.dragon_fade_progress = 0
+        self.dragon_soul = []
+
+        self.enemies_to_spawn = 10 
+        self.enemies_spawned = 0
+
+        self.stage_interlude = False # 【修正】
+        self.is_tutorial_interlude = False
+        self.interlude_timer = 0
+        self.interlude_particles = []
+        # If it's the very first start, the game will immediately transition to stage 0 tutorial
+
+    # draw helper: big dragon face for title/ending
+    def draw_large_dragon(self, cx, cy, scale=1.0, fade=0):
+        off = (pyxel.frame_count % 10) * 0.1
+        pyxel.circ(int(cx - 30 + off), cy, int(30 * scale), 8)
+        pyxel.circ(int(cx + 30 - off), cy, int(25 * scale), 9)
+        # triangle head
+        pyxel.tri(int(cx - 20*scale), int(cy), int(cx + 50*scale), int(cy - 30*scale), int(cx + 50*scale), int(cy + 30*scale), 3)
+        pyxel.rect(int(cx + 50*scale), int(cy - 10*scale), int(10*scale), int(20*scale), 2)
+        # jaw
+        pyxel.tri(int(cx - 20*scale), int(cy), int(cx + 50*scale), int(cy + 30*scale), int(cx + 20*scale), int(cy + 40*scale), 2)
+        # horns
+        pyxel.tri(int(cx + 10*scale), int(cy - 30*scale), int(cx + 30*scale), int(cy - 40*scale), int(cx + 50*scale), int(cy - 20*scale), 9)
+        pyxel.tri(int(cx + 10*scale), int(cy + 30*scale), int(cx + 30*scale), int(cy + 40*scale), int(cx + 50*scale), int(cy + 20*scale), 9)
+        # eye
+        pyxel.circ(int(cx + 15*scale), int(cy - 15*scale), int(5*scale), 8)
+        pyxel.pset(int(cx + 15*scale), int(cy - 15*scale), 9)
+        # mouth line
+        pyxel.line(int(cx + 50*scale), int(cy + 5*scale), int(cx + 60*scale), int(cy + 5*scale), 8)
+        # fade overlay
+        if fade > 0:
+            intensity = min(int(fade), 30)
+            pyxel.rect(int(cx - 18*scale), int(cy - 18*scale), int(36*scale), int(36*scale), 7)
+
+    def clear_all_enemies(self, create_explosion=True):
+        """Power4 の効果: 画面上の敵をすべて消す"""
+        removed = 0
+        for e in list(self.enemies):
+            if e is not None and e.active:
+                e.active = False
+                removed += 1
+                if create_explosion:
+                    self.explosions.append(Explosion(e.x, e.y, count=18))
+                    self.score += 5  # 小さいボーナス
+        # also clear boss bullets (but not the boss itself)
+        if self.boss is not None:
+            for b in list(self.boss.bullets):
+                b.active = False
+        # optionally clear enemy bullets
+        for e in list(self.enemies):
+            e.bullets = []
+        # remove them from list
+        self.enemies = [e for e in self.enemies if e is not None and e.active]
+        return removed
+
+    def spawn_enemy_batch(self, count=1):
+        """スポーンバッチ: 一度に複数湧かせたいとき用"""
+        for _ in range(count):
+            if self.enemies_spawned >= self.enemies_to_spawn:
+                break
+            y = random.randint(10, SCREEN_H - 10)
+            self.enemies.append(Enemy(SCREEN_W, y, self.stage))
+            self.enemies_spawned += 1
+
+    def start_interlude(self, is_tutorial=False):
+        """ステージ間演出を開始"""
+        self.stage_interlude = True
+        self.is_tutorial_interlude = is_tutorial
+        self.interlude_timer = 0
+        self.interlude_particles = []
+        if not is_tutorial:
+            self.stage += 1
+            
+    def end_interlude(self):
+        """ステージ間演出を終了し、次のステージへ移行"""
+        self.stage_interlude = False
+        self.is_tutorial_interlude = False
+        self.interlude_timer = 0
+        self.interlude_particles = []
+        # Tutorial ends, start actual Stage 1 (self.stage = 0)
+        if self.stage == -1: 
+            self.stage = 0 
+        
+        # After interlude, set spawn counts for next stage (using self.stage which is now the current stage number)
+        # self.stageが0, 1, 2... に対応
+        self.enemies_to_spawn = 10 + self.stage * 10
+        self.enemies_spawned = 0
+
+    def update_interlude(self):
+        """stage_interlude = True の時に毎フレーム実行"""
+        self.interlude_timer += 1
+        # self.stageは、インターリュード開始時に既にインクリメントされているため、
+        # チュートリアル以外では次のステージの番号を示す
+        s = self.stage
+        
+        if self.is_tutorial_interlude:
+            # Tutorial interlude (Stage -1 -> 0, which is actual Stage 1)
+            # End interlude only when user presses ENTER
+            if (pyxel.btnp(pyxel.KEY_RETURN) or pyxel.btnp(pyxel.GAMEPAD1_BUTTON_START)) and self.interlude_timer > 30:
+                self.end_interlude()
+            return
+        
+        # --- Normal Interlude Effects (Stage 0 -> 1, etc.) ---
+        
+        if s == 1:
+            # ice crystals falling
+            if len(self.interlude_particles) < 60 and self.interlude_timer % 2 == 0:
+                self.interlude_particles.append({'x': random.randint(0, SCREEN_W), 'y': -2, 'v': random.uniform(0.6, 1.6)})
+            for p in self.interlude_particles:
+                p['y'] += p['v']
+            self.interlude_particles = [p for p in self.interlude_particles if p['y'] < SCREEN_H + 10]
+        elif s == 2:
+            # lightning flashes:
+            if self.interlude_timer % 20 == 0 and len(self.interlude_particles) < 6:
+                self.interlude_particles.append({'x': random.randint(10, SCREEN_W-10), 't': 6})
+            for p in self.interlude_particles:
+                p['t'] -= 1
+            self.interlude_particles = [p for p in self.interlude_particles if p['t'] > 0]
+        elif s == 3:
+            # volcanic ash
+            if len(self.interlude_particles) < 80 and self.interlude_timer % 2 == 0:
+                self.interlude_particles.append({'x': random.randint(0, SCREEN_W), 'y': random.randint(-10, 0), 'v': random.uniform(0.3, 1.0)})
+            for p in self.interlude_particles:
+                p['y'] += p['v']
+            self.interlude_particles = [p for p in self.interlude_particles if p['y'] < SCREEN_H + 10]
+        elif s == 4:
+            # temple light rays
+            if len(self.interlude_particles) < 20 and self.interlude_timer % 6 == 0:
+                self.interlude_particles.append({'x': random.randint(20, SCREEN_W-20), 't': random.randint(30, 70)})
+            for p in self.interlude_particles:
+                p['t'] -= 1
+            self.interlude_particles = [p for p in self.interlude_particles if p['t'] > 0]
+        elif s == 5:
+            # final stage - distortion effect
+            pass
+
+
+        # end interlude after some frames
+        if self.interlude_timer > 120:
+            self.end_interlude()
+
+    def update(self):
+        self.background.update()
+
+        # TITLE handling
+        if self.show_title:
+            self.title_timer += 1
+            for p in self.title_particles:
+                p.update()
+            # allow skipping after dragon show time
+            if self.title_timer > DRAGON_SHOW_TIME and pyxel.btnp(pyxel.KEY_RETURN):
+                self.show_title = False
+                self.start_interlude(is_tutorial=True) # Start tutorial interlude
+            return
+
+        # GAME OVER
+        if self.game_over:
+            if pyxel.btnp(pyxel.KEY_RETURN) or pyxel.btn(pyxel.GAMEPAD1_BUTTON_START):
+                self.reset(is_initial_start=False)
+                self.start_interlude(is_tutorial=True) # Restart with tutorial
+            return
+
+        # ENDING
+        if self.ending:
+            frame = pyxel.frame_count - self.end_start_frame
+            # progress dragon fade and spawn soul particles
+            if self.dragon_fade_progress < 30:
+                self.dragon_fade_progress += 1
+                for _ in range(6):
+                    self.dragon_soul.append({
+                        'x': SCREEN_W // 2 + random.uniform(-14, 14),
+                        'y': SCREEN_H // 2 + random.uniform(-8, 8),
+                        'dx': random.uniform(-0.6, 0.6),
+                        'dy': -random.uniform(0.6, 1.6),
+                        'life': random.randint(40, 90),
+                        'c': random.choice([7, 10])
+                    })
+            # sustain gold particles
+            if len(self.end_particles) < 140:
+                self.end_particles.append({
+                    'x': random.randint(0, SCREEN_W),
+                    'y': random.randint(0, SCREEN_H),
+                    'v': random.uniform(0.2, 0.9),
+                    'c': random.choice([10, 9, 7])
+                })
+            # update gold particles
+            for p in self.end_particles:
+                p['y'] -= p['v']
+                if p['y'] < -2:
+                    p['y'] = SCREEN_H + 2
+                    p['x'] = random.randint(0, SCREEN_W)
+            # update soul particles
+            for s in self.dragon_soul:
+                s['x'] += s['dx']
+                s['y'] += s['dy']
+                s['dy'] *= 0.994
+                s['life'] -= 1
+            self.dragon_soul = [s for s in self.dragon_soul if s['life'] > 0]
+            # return to title after ending show time
+            if frame > ENDING_SHOW_TIME:
+                self.reset(is_initial_start=True)
+                self.start_interlude(is_tutorial=True) # Restart with tutorial
+            return
+
+        # Stage interlude handling: freeze gameplay and show visual/tutorial
+        if self.stage_interlude:
+            self.update_interlude()
+            return
+
+        # --- Main gameplay updates ---
+        self.player.update()
+        self.stage_timer += 1
+
+        # spawn small enemies periodically if no boss and we still have quota
+        if self.boss is None:
+            # spawn in small batches: 1 per 60 frames, but honor enemies_to_spawn
+            if self.stage_timer % 60 == 0:
+                # spawn batch size: 1 normally; later you can scale
+                self.spawn_enemy_batch(count=1)
+
+        if self.stage_timer % 600 == 0:
+            y = random.randint(10, SCREEN_H - 10)
+            self.powerups.append(PowerUp(SCREEN_W, y))
+
+        # update enemies and collisions
+        for e in list(self.enemies):
+            if e is not None and e.active:
+                e.update(self.player)
+                # player bullets vs enemy
+                for b in list(self.player.bullets):
+                    if b is None or not b.active:
+                        continue
+                    if abs(e.x - b.x) < 4 and abs(e.y - b.y) < 4:
+                        e.active = False
+                        b.active = False
+                        self.score += 10
+                        self.explosions.append(Explosion(e.x, e.y))
+                # enemy bullets vs player
+                for eb in list(e.bullets):
+                    if eb is not None and eb.active and abs(self.player.x - eb.x) < 4 and abs(self.player.y - eb.y) < 4:
+                        eb.active = False
+                        self.player.life -= 1
+                        self.explosions.append(Explosion(self.player.x, self.player.y))
+                        if self.player.life <= 0:
+                            self.game_over = True
+                # collision body vs player
+                if abs(e.x - self.player.x) < 6 and abs(e.y - self.player.y) < 6:
+                    e.active = False
+                    self.player.life -= 1
+                    self.explosions.append(Explosion(self.player.x, self.player.y))
+                    if self.player.life <= 0:
+                        self.game_over = True
+
+        # cleanup enemies
+        self.enemies = [e for e in self.enemies if e is not None and e.active]
+
+        # powerup update & pickup
+        for p in list(self.powerups):
+            if p is not None and p.active:
+                p.update()
+                if abs(self.player.x - p.x) < 6 and abs(self.player.y - p.y) < 6:
+                    p.active = False
+                    # power pickup behavior changed:
+                    if self.player.power < 4:
+                        self.player.power = min(4, self.player.power + 1)
+                        if self.player.power >= 4:
+                            self.clear_all_enemies(create_explosion=True)
+                    else:
+                        # already at >=4: clear on each pickup
+                        self.clear_all_enemies(create_explosion=True)
+        self.powerups = [p for p in self.powerups if p is not None and p.active]
+
+        # explosion update
+        for ex in self.explosions:
+            ex.update()
+        self.explosions = [ex for ex in self.explosions if ex.active]
+
+        # Boss spawn condition:
+        # if we've spawned all scheduled enemies and no enemies remain on screen, bring boss after a delay
+        # self.stageは0から始まる
+        if self.enemies_spawned >= self.enemies_to_spawn and len(self.enemies) == 0 and self.boss is None and self.stage < 5:
+            # use stage_timer to create a short delay before boss
+            if self.stage_timer > 60:
+                self.boss = Boss(self.stage)
+
+        # boss update & bullet collisions (only if boss exists)
+        if self.boss is not None and getattr(self.boss, 'active', False):
+            self.boss.update(self.player)
+            # player's bullets vs boss
+            for b in list(self.player.bullets):
+                if b is None or not b.active:
+                    continue
+                if (self.boss.x <= b.x <= self.boss.x + Boss.SIZE and
+                    self.boss.y <= b.y <= self.boss.y + Boss.SIZE):
+                    b.active = False
+                    self.boss.hp -= 1
+                    self.explosions.append(Explosion(b.x, b.y, count=6))
+                    if self.boss.hp <= 0:
+                        self.explosions.append(Explosion(self.boss.x + Boss.SIZE//2, self.boss.y + Boss.SIZE//2, count=100))
+                        self.boss.active = False
+                        # boss destroyed -> stage clear
+                        self.boss = None
+                        # stage up logic is now inside start_interlude, which is called below
+                        self.stage_timer = 0
+                        self.score += 500
+                        # trigger interlude if not final stage (self.stage is 4 after clearing the boss of stage 5/index 4)
+                        if self.stage < 5:
+                            self.start_interlude() # This call increases self.stage to the next number (e.g., 0->1)
+                        else:
+                            # final boss cleared => ending
+                            self.ending = True
+                            self.end_start_frame = pyxel.frame_count
+                            self.ranking.append(self.score)
+                            self.ranking.sort(reverse=True)
+                            self.ranking = self.ranking[:3]
+                        break
+            # boss bullets vs player
+            if self.boss is not None:  # may have become None after break
+                for bb in list(self.boss.bullets):
+                    if bb is not None and bb.active and abs(self.player.x - bb.x) < 4 and abs(self.player.y - bb.y) < 4:
+                        bb.active = False
+                        self.player.life -= 1
+                        self.explosions.append(Explosion(self.player.x, self.player.y))
+                        if self.player.life <= 0:
+                            self.game_over = True
+
+    def draw(self):
+        # Title screen
+        if self.show_title:
+            pyxel.cls(1)
+            for p in self.title_particles:
+                p.draw()
+            copyright_text = "(C)M.takahashi"
+            CR_X = SCREEN_W - (len(copyright_text) * 4) - 5
+            CR_Y = 5
+            pyxel.text(CR_X + 1, CR_Y + 1, copyright_text, 0)
+            pyxel.text(CR_X, CR_Y, copyright_text, 7)
+            if self.title_timer < DRAGON_SHOW_TIME:
+                self.draw_large_dragon(SCREEN_W // 2, SCREEN_H // 2)
+                pyxel.text(10, 10, "SHOOTING WAR", 10)
+                pyxel.text(10, 20, "AWAKENING...", 7)
+                if pyxel.frame_count % 15 < 7:
+                    pyxel.text(25, 110, "GET READY FOR BATTLE", 8)
+            else:
+                title1 = "SHOOTING WAR"
+                title2 = "DRAGON AWAKENING"
+                pyxel.text(SCREEN_W // 2 - len(title1)*2 + 1, 20 + 1, title1, 0)
+                color = 10 if pyxel.frame_count % 15 < 7 else 8
+                pyxel.text(SCREEN_W // 2 - len(title1)*2, 20, title1, color)
+                pyxel.text(SCREEN_W // 2 - len(title2)*2 + 1, 35 + 1, title2, 0)
+                pyxel.text(SCREEN_W // 2 - len(title2)*2, 35, title2, 11)
+                pyxel.rect(30, 60, 100, 35, 1)
+                pyxel.rectb(30, 60, 100, 35, 10)
+                pyxel.text(60 + 1, 63 + 1, "- TOP SCORE -", 0)
+                pyxel.text(60, 63, "- TOP SCORE -", 7)
+                for i, s in enumerate(self.ranking):
+                    pyxel.text(65, 75 + i * 8, f"{i + 1}: {s:05}", 7)
+                start_text = "PRESS [ENTER] TO START"
+                if pyxel.frame_count % 15 < 7:
+                    pyxel.text(33, 110, start_text, 10)
+                else:
+                    pyxel.text(33 + 1, 110 + 1, start_text, 8)
+            return
+
+        # Stage interlude drawing
+        if self.stage_interlude:
+            # stage number for display: +1 for tutorial, or self.stage itself for others
+            s_display = self.stage + 1
+            
+            pyxel.cls(BG_COLORS[min(s_display, len(BG_COLORS) - 1)])
+            self.background.draw()
+
+            # Tutorial Screen (Stage -1 -> 0, which is actual Stage 1)
+            if self.is_tutorial_interlude:
+                # ----------------------------------------------------
+                # ステージ1のタイトルと操作説明の表示
+                # ----------------------------------------------------
+                stage_name = "STAGE 1 : DRAGON'S FRONTIER"
+                tutorial_header = "TUTORIAL: CONTROLS"
+                color = 10
+                
+                # Draw Box (中央に配置)
+                box_w, box_h = 140, 90
+                box_x, box_y = (SCREEN_W - box_w) // 2, (SCREEN_H - box_h) // 2
+                
+                pyxel.rect(box_x, box_y, box_w, box_h, 1)
+                pyxel.rectb(box_x, box_y, box_w, box_h, 7)
+                
+                # Header (STAGE NAME)
+                pyxel.text(box_x + 5, box_y + 5, tutorial_header, 11)
+                pyxel.text(box_x + 5, box_y + 15, stage_name, color)
+                pyxel.line(box_x + 5, box_y + 23, box_x + box_w - 5, box_y + 23, 7)
+                
+                # Controls Text (調整された配置)
+                pyxel.text(box_x + 5, box_y + 30, "MOVE: UP/DOWN/LEFT/RIGHT KEYS", 7)
+                pyxel.text(box_x + 5, box_y + 40, "SHOOT: SPECE/A KEY", 7)
+                pyxel.text(box_x + 5, box_y + 55, "GREEN ENEMIES MUST BE DESTROYED.", 8)
+                pyxel.text(box_x + 5, box_y + 65, "POWERUPS (P) INCREASE FIREPOWER.", 10)
+                pyxel.text(box_x + 5, box_y + 78, "PRESS [RETURN/START] TO STAGE 1", 11)
+
+            # Normal Interlude Screens (Stage 0 -> 1, etc.)
+            else:
+                # self.stageは、クリアしたステージの次の番号を示す (例: 0クリア -> stage=1)
+                stage_names = ["STAGE 2 : FROST REALM", "STAGE 3 : STORMFIELD", "STAGE 4 : ASH WASTES", "STAGE 5 : SANCTUM", "STAGE 6 : CONFRONTATION (FINAL)"]
+                stage_colors = [11, 10, 8, 10, 10]
+                
+                # Check bounds for stage_names (s_display = 2, 3, 4, 5, 6)
+                if 2 <= s_display <= len(stage_names) + 1:
+                    stage_name = stage_names[s_display - 2] # index 0 corresponds to STAGE 2
+                    color = stage_colors[s_display - 2]
+                else:
+                    stage_name = f"STAGE {s_display}"
+                    color = 7
+
+                # Draw effect based on the stage (s_display = 2 is Frost Realm, etc.)
+                if s_display == 2:
+                    if self.interlude_timer % 3 == 0:
+                        pyxel.rect(0, 0, SCREEN_W, SCREEN_H, 1)
+                    for p in self.interlude_particles:
+                        pyxel.pset(int(p['x']), int(p['y']), 11)
+                elif s_display == 3:
+                    if self.interlude_timer % 20 < 4:
+                        pyxel.cls(7)
+                    for p in self.interlude_particles:
+                        x = p['x']
+                        pyxel.line(x, 0, x-2, 30, 7)
+                        pyxel.line(x-2, 30, x+4, 60, 7)
+                elif s_display == 4:
+                    for i in range(10):
+                        pyxel.line(i*16, SCREEN_H-1, i*16 + 8, SCREEN_H - 1 - pyxel.rndi(3, 8), 8)
+                        pyxel.line(i*16 + 4, SCREEN_H-1, i*16 + 12, SCREEN_H - 1 - pyxel.rndi(1, 5), 9)
+                    for p in self.interlude_particles:
+                        pyxel.pset(int(p['x']), int(p['y']), 8)
+                elif s_display == 5:
+                    for p in self.interlude_particles:
+                        x = p['x']
+                        t = p['t']
+                        brightness = 10 if t % 10 < 5 else 7
+                        pyxel.line(x, 0, x, SCREEN_H, brightness)
+                        pyxel.line(x-1, 0, x-1, SCREEN_H, (brightness + 1) % 16)
+                        pyxel.line(x+1, 0, x+1, SCREEN_H, (brightness + 1) % 16)
+                elif s_display == 6:
+                    distort_y = math.sin(self.interlude_timer * 0.1) * 3
+                    pyxel.tri(SCREEN_W // 2, 0, 0, SCREEN_H, SCREEN_W, SCREEN_H, 8)
+                    pyxel.tri(SCREEN_W // 2, SCREEN_H, 0, 0, SCREEN_W, 0, 9)
+                
+                # Stage Name Display (Normal Interludes)
+                text_w = len(stage_name) * 4
+                x = SCREEN_W // 2 - text_w // 2
+                y = SCREEN_H // 2 - 4
+                pyxel.text(x + 1, y + 1, stage_name, 0)
+                pyxel.text(x, y, stage_name, color)
+            
+            return
+
+        # Gameplay drawing
+        pyxel.cls(BG_COLORS[min(self.stage + 1, len(BG_COLORS) - 1)]) 
+        self.background.draw()
+
+        for ex in self.explosions:
+            if ex is not None and ex.active:
+                ex.draw()
+
+        for p in self.powerups:
+            if p is not None and p.active:
+                p.draw()
+
+        if self.boss is not None and getattr(self.boss, 'active', False):
+            self.boss.draw()
+
+        for e in self.enemies:
+            if e is not None and e.active:
+                e.draw()
+
+        self.player.draw()
+
+    # -------------------
+        # HUD (Head-Up Display) - 重なり解消レイアウト
+        # -------------------
+        
+        # 1. 中央：ゲームタイトル (短い形式にするか、位置を少し下げる)
+        # 画面幅いっぱいの場合は、タイトルのフォントを工夫するか少し下げます
+        full_title = "DRAGON AWAKENING" # 長すぎる場合はサブタイトルのみにするのも手です
+        title_x = (SCREEN_W // 2) - (len(full_title) * 2)
+        
+        # タイトルがスコアと重ならないよう、1行下にずらして配置
+        pyxel.text(title_x + 1, 10 + 1, full_title, 0) # 影
+        pyxel.text(title_x, 10, full_title, 10)       # メイン（金）
+
+        # 2. 最上段：情報の左右振り分け
+        # 左上：STAGE数 (余白を確保)
+        pyxel.text(4, 4, f"ST:{self.stage + 1}", 7) 
+        
+        # 右上：SCORE (表示を短くして右端へ)
+        score_text = f"SC:{self.score:05}"
+        pyxel.text(SCREEN_W - (len(score_text) * 4) - 4, 4, score_text, 10)
+
+        # 3. 最下段：ステータス情報 (左右に完全に分ける)
+        # 左下：POWER
+        pyxel.text(4, SCREEN_H - 8, "PWR:", 7)
+        for i in range(self.player.power):
+            pyxel.rect(22 + i * 5, SCREEN_H - 7, 3, 3, 10) # 丸より四角の方が省スペース
+        
+        # 右下：LIFE (右端から逆算)
+        life_label = "LIFE:"
+        lx = SCREEN_W - 50
+        pyxel.text(lx, SCREEN_H - 8, life_label, 7)
+        for i in range(max(0, self.player.life)):
+            pyxel.rect(lx + 22 + i * 5, SCREEN_H - 7, 3, 3, 14)
+
+        # Game over
+        if self.game_over:
+            pyxel.rect(30, 45, 100, 50, 1)
+            pyxel.rectb(30, 45, 100, 50, 7)
+            pyxel.text(55, 50, "G A M E  O V E R", 8)
+            pyxel.text(40, 65, f"SCORE: {self.score:05}", 7)
+            pyxel.text(45, 80, "RETURN/START KEY!", 10)
+
+        # Ending overlay (drawn on top when ending == True)
+        if self.ending:
+            pyxel.cls(9)
+            frame = pyxel.frame_count - self.end_start_frame
+            # rings
+            for i in range(3):
+                r = 10 + (frame % 90) * (1 + i * 0.35) + i * 12
+                pyxel.circb(SCREEN_W // 2, SCREEN_H // 2, int(r), 7)
+                pyxel.circb(SCREEN_W // 2, SCREEN_H // 2, int(r) + 1, 10)
+            # gold particles
+            for p in self.end_particles:
+                pyxel.pset(int(p['x']), int(p['y']), p['c'])
+            # draw big dragon fading and shrinking
+            center_x = SCREEN_W // 2
+            center_y = SCREEN_H // 2
+            scale = max(0.0, 1.0 - frame / ENDING_SHOW_TIME)
+            fade = frame
+            self.draw_large_dragon(center_x, center_y, scale, fade)
+            # soul particles
+            for s in self.dragon_soul:
+                pyxel.pset(int(s['x']), int(s['y']), s['c'])
+            # ending text
+            if frame > ENDING_SHOW_TIME * 0.5:
+                end_text = "DRAGON SLAYER"
+                pyxel.text(center_x - len(end_text)*2 + 1, center_y + 1, end_text, 0)
+                pyxel.text(center_x - len(end_text)*2, center_y, end_text, 7)
+
+
+# 実行
+App()
+
+
